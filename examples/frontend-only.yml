@@ -1,0 +1,36 @@
+# Example: Frontend-Only CI Workflow
+# For projects with just a frontend application
+
+name: Frontend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'package*.json'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'package*.json'
+
+jobs:
+  # Unit tests (run in parallel with E2E)
+  unit-tests:
+    uses: YOUR_ORG/public-cicd/.github/workflows/frontend-unit-tests-npm.yml@main
+    with:
+      node-version: '22'
+      working-directory: 'frontend'
+      cache-dependency-path: 'frontend/package-lock.json'
+      test-command: 'npm run test:coverage'
+
+  # E2E tests (run in parallel with unit tests)
+  e2e-tests:
+    uses: YOUR_ORG/public-cicd/.github/workflows/frontend-e2e-tests-npm.yml@main
+    with:
+      node-version: '22'
+      working-directory: 'frontend'
+      cache-dependency-path: 'frontend/package-lock.json'
+      test-command: 'npm run test:e2e'
+      playwright-browsers: 'chromium'

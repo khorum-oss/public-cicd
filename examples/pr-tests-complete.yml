@@ -1,0 +1,179 @@
+# Example: Complete PR Tests Workflow
+# This example shows how to use all the reusable workflows together
+# Copy this to your repository's .github/workflows/ directory and customize as needed
+
+name: Module PR Tests
+run-name: PR Tests for modules by ${{ github.actor }}
+
+on:
+  pull_request:
+    branches:
+      - 'main'
+    types: [opened, synchronize, reopened]
+
+# Cancel in-progress runs for the same PR when new commits are pushed
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Check if backend code changed (anything outside frontend/, .github/, docs/)
+  check-backend:
+    name: Check Backend Changes
+    uses: violabs/public-cicd/.github/workflows/check-changes.yml@main
+    with:
+      mode: exclude
+      exclude-patterns: '^(frontend/|\.github/|docs/)'
+
+  # Check if frontend code changed
+  check-frontend:
+    name: Check Frontend Changes
+    uses: violabs/public-cicd/.github/workflows/check-changes.yml@main
+    with:
+      mode: include
+      include-patterns: '^frontend/'
+
+  # Detekt static analysis (runs early to fail fast on code style issues)
+  detekt-check:
+    name: Detekt
+    needs: check-backend
+    if: needs.check-backend.outputs.changed == 'true'
+    uses: violabs/public-cicd/.github/workflows/gradle-detekt.yml@main
+    with:
+      java-version: '21'
+
+  # Fast-fail build check
+  build-check:
+    name: Build Check
+    needs: [check-backend, detekt-check]
+    if: needs.check-backend.outputs.changed == 'true'
+    uses: violabs/public-cicd/.github/workflows/gradle-build.yml@main
+    with:
+      java-version: '21'
+      build-tasks: 'classes testClasses componentTestClasses'
+      gradle-args: '--no-daemon'
+
+  # Determine which modules changed
+  determine-modules:
+    name: Determine Changed Modules
+    needs: [check-backend, build-check]
+    if: needs.check-backend.outputs.changed == 'true' && needs.build-check.result == 'success'
+    uses: violabs/public-cicd/.github/workflows/gradle-detect-modules.yml@main
+    with:
+      java-version: '21'
+
+  # Unit tests with matrix strategy
+  unit-tests:
+    needs: [check-backend, build-check, determine-modules]
+    if: needs.determine-modules.outputs.has-modules == 'true'
+    uses: violabs/public-cicd/.github/workflows/gradle-matrix-tests.yml@main
+    with:
+      java-version: '21'
+      modules-json: ${{ needs.determine-modules.outputs.matrix }}
+      exclude-tasks: 'npmInstall testComponents'
+      coverage-enabled: true
+      min-coverage-overall: 40
+      min-coverage-changed-files: 40
+
+  # Context tests - each test type runs in parallel with unique artifact names
+  component-tests:
+    name: Component Tests
+    needs: [check-backend, build-check]
+    if: needs.check-backend.outputs.changed == 'true' && needs.build-check.result == 'success'
+    uses: violabs/public-cicd/.github/workflows/gradle-context-tests.yml@main
+    with:
+      test-name: 'Component Tests'
+      java-version: '21'
+      test-task: 'testComponents'
+      exclude-tasks: 'npmInstall'
+
+  api-tests:
+    name: API Tests
+    needs: [check-backend, build-check]
+    if: needs.check-backend.outputs.changed == 'true' && needs.build-check.result == 'success'
+    uses: violabs/public-cicd/.github/workflows/gradle-context-tests.yml@main
+    with:
+      test-name: 'API Tests'
+      java-version: '21'
+      test-task: 'testApi'
+      exclude-tasks: 'npmInstall'
+
+  repo-slice-tests:
+    name: Repo Slice Tests
+    needs: [check-backend, build-check]
+    if: needs.check-backend.outputs.changed == 'true' && needs.build-check.result == 'success'
+    uses: violabs/public-cicd/.github/workflows/gradle-context-tests.yml@main
+    with:
+      test-name: 'Repo Slice Tests'
+      java-version: '21'
+      test-task: 'testRepoSlices'
+      exclude-tasks: 'npmInstall'
+
+  flow-tests:
+    name: Flow Tests
+    needs: [check-backend, build-check]
+    if: needs.check-backend.outputs.changed == 'true' && needs.build-check.result == 'success'
+    uses: violabs/public-cicd/.github/workflows/gradle-context-tests.yml@main
+    with:
+      test-name: 'Flow Tests'
+      java-version: '21'
+      test-task: 'testFlows'
+      exclude-tasks: 'npmInstall'
+
+  # Frontend unit tests
+  frontend-unit-tests:
+    needs: check-frontend
+    if: needs.check-frontend.outputs.changed == 'true'
+    uses: violabs/public-cicd/.github/workflows/frontend-unit-tests-npm.yml@main
+    with:
+      node-version: '22'
+      working-directory: 'frontend'
+      cache-dependency-path: 'frontend/package-lock.json'
+      test-command: 'npm run test:coverage'
+
+  # Frontend E2E tests
+  frontend-e2e-tests:
+    needs: check-frontend
+    if: needs.check-frontend.outputs.changed == 'true'
+    uses: violabs/public-cicd/.github/workflows/frontend-e2e-tests-npm.yml@main
+    with:
+      node-version: '22'
+      working-directory: 'frontend'
+      cache-dependency-path: 'frontend/package-lock.json'
+      test-command: 'npm run test:e2e'
+      playwright-browsers: 'chromium'
+
+  # Discord notification
+  notify-discord:
+    name: Notify Discord
+    needs:
+      - check-backend
+      - build-check
+      - unit-tests
+      - component-tests
+      - api-tests
+      - repo-slice-tests
+      - flow-tests
+      - frontend-unit-tests
+      - frontend-e2e-tests
+      - detekt-check
+    if: always()
+    uses: violabs/public-cicd/.github/workflows/notify-discord.yml@main
+    with:
+      workflow_name: ${{ github.workflow }}
+      build_result: ${{ needs.build-check.result }}
+      test_result: ${{ needs.unit-tests.result }}
+      context_tests_json: >
+        {
+          "Component Tests": "${{ needs.component-tests.result }}",
+          "API Tests": "${{ needs.api-tests.result }}",
+          "Repo Slice Tests": "${{ needs.repo-slice-tests.result }}",
+          "Flow Tests": "${{ needs.flow-tests.result }}"
+        }
+      frontend_result: ${{ needs.frontend-unit-tests.result }}
+      e2e_result: ${{ needs.frontend-e2e-tests.result }}
+      detekt_result: ${{ needs.detekt-check.result }}
+      pr_title: ${{ github.event.pull_request.title }}
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
