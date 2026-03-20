@@ -1,0 +1,81 @@
+name: 'Setup Node.js'
+description: 'Sets up Node.js with npm caching'
+
+inputs:
+  node-version:
+    description: 'Node.js version to use'
+    required: false
+    default: '22'
+  working-directory:
+    description: 'Working directory for npm operations'
+    required: false
+    default: '.'
+  cache-dependency-path:
+    description: 'Path to package-lock.json for caching'
+    required: false
+    default: 'package-lock.json'
+  cache:
+    description: 'Enable npm caching (set to empty string to disable)'
+    required: false
+    default: 'npm'
+  install-dependencies:
+    description: 'Whether to install dependencies'
+    required: false
+    default: 'true'
+  install-command:
+    description: 'Install command (auto|ci|install). "auto" uses npm ci if lock file exists, npm install otherwise'
+    required: false
+    default: 'auto'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check if lock file exists
+      id: check-lock
+      shell: bash
+      run: |
+        # Check cache-dependency-path for caching
+        if [ -f "${{ inputs.cache-dependency-path }}" ]; then
+          echo "cache-exists=true" >> $GITHUB_OUTPUT
+          echo "Lock file found for caching: ${{ inputs.cache-dependency-path }}"
+        else
+          echo "cache-exists=false" >> $GITHUB_OUTPUT
+          echo "::warning::Lock file not found at '${{ inputs.cache-dependency-path }}'. Caching disabled."
+        fi
+
+        # Check working directory for install command
+        LOCK_PATH="${{ inputs.working-directory }}/package-lock.json"
+        if [ -f "$LOCK_PATH" ]; then
+          echo "install-lock-exists=true" >> $GITHUB_OUTPUT
+          echo "Lock file found in working directory: $LOCK_PATH"
+        else
+          echo "install-lock-exists=false" >> $GITHUB_OUTPUT
+          echo "::notice::No package-lock.json in '${{ inputs.working-directory }}'. Will use 'npm install' instead of 'npm ci'."
+        fi
+
+    - name: Setup Node.js ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: ${{ steps.check-lock.outputs.cache-exists == 'true' && inputs.cache != '' && inputs.cache || '' }}
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+    - name: Install dependencies
+      if: inputs.install-dependencies == 'true'
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: |
+        if [ "${{ inputs.install-command }}" = "ci" ]; then
+          npm ci
+        elif [ "${{ inputs.install-command }}" = "install" ]; then
+          npm install
+        else
+          # auto mode: use npm ci if lock file exists, npm install otherwise
+          if [ "${{ steps.check-lock.outputs.install-lock-exists }}" = "true" ]; then
+            echo "Running: npm ci"
+            npm ci
+          else
+            echo "Running: npm install (no lock file found)"
+            npm install
+          fi
+        fi

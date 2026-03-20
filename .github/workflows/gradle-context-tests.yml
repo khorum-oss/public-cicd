@@ -1,0 +1,105 @@
+name: Gradle Context Tests
+
+on:
+  workflow_call:
+    inputs:
+      test-name:
+        description: 'Display name for this test type'
+        required: false
+        type: string
+        default: 'Context Tests'
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      java-distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      test-task:
+        description: 'Gradle test task to run'
+        required: false
+        type: string
+        default: 'testComponents'
+      exclude-tasks:
+        description: 'Tasks to exclude (space-separated)'
+        required: false
+        type: string
+        default: ''
+      no-daemon:
+        description: 'Run Gradle with --no-daemon flag'
+        required: false
+        type: boolean
+        default: true
+      gradle-args:
+        description: 'Additional Gradle arguments'
+        required: false
+        type: string
+        default: ''
+      upload-test-reports:
+        description: 'Upload test reports as artifacts'
+        required: false
+        type: boolean
+        default: true
+      artifact-name:
+        description: 'Name for the test reports artifact (defaults to test-name with spaces replaced)'
+        required: false
+        type: string
+        default: ''
+      reports-path:
+        description: 'Path to test reports'
+        required: false
+        type: string
+        default: 'build/reports/tests/'
+      runs-on:
+        description: 'Runner to use (string or JSON array for labels)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+jobs:
+  context-tests:
+    name: ${{ inputs.test-name }}
+    runs-on: ${{ contains(inputs.runs-on, '[') && fromJson(inputs.runs-on) || inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: violabs/public-cicd/.github/actions/setup-java-gradle@main
+        with:
+          java-distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+
+      - name: Build exclude tasks string
+        id: exclude
+        run: |
+          EXCLUDES=""
+          if [ -n "${{ inputs.exclude-tasks }}" ]; then
+            for task in ${{ inputs.exclude-tasks }}; do
+              EXCLUDES="$EXCLUDES -x $task"
+            done
+          fi
+          echo "args=$EXCLUDES" >> "$GITHUB_OUTPUT"
+
+      - name: Run ${{ inputs.test-name }}
+        run: ./gradlew ${{ inputs.test-task }} ${{ steps.exclude.outputs.args }} ${{ inputs.no-daemon && '--no-daemon' || '' }} ${{ inputs.gradle-args }}
+
+      - name: Generate artifact name
+        id: artifact
+        if: always() && inputs.upload-test-reports
+        run: |
+          if [ -n "${{ inputs.artifact-name }}" ]; then
+            echo "name=${{ inputs.artifact-name }}" >> "$GITHUB_OUTPUT"
+          else
+            # Convert test-name to artifact name: lowercase and replace spaces with dashes
+            NAME=$(echo "${{ inputs.test-name }}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')-reports
+            echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload test reports
+        if: always() && inputs.upload-test-reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ inputs.reports-path }}

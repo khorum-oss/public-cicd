@@ -1,0 +1,81 @@
+name: 'Setup Java and Gradle'
+description: 'Sets up Java, Gradle, and caching for Gradle builds with cache corruption protection'
+
+inputs:
+  java-version:
+    description: 'Java version to use'
+    required: false
+    default: '21'
+  java-distribution:
+    description: 'Java distribution to use'
+    required: false
+    default: 'temurin'
+  gradle-cache-enabled:
+    description: 'Enable Gradle caching'
+    required: false
+    default: 'true'
+  additional-cache-paths:
+    description: 'Additional paths to cache (newline-separated)'
+    required: false
+    default: ''
+  cleanup-wrapper:
+    description: 'Clean up Gradle wrapper distributions (fixes zip corruption errors)'
+    required: false
+    default: 'true'
+  cleanup-caches:
+    description: 'Clean up potentially corrupted Gradle caches'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Stop Gradle daemons
+      shell: bash
+      run: pkill -f GradleDaemon || true
+
+    - name: Cleanup Gradle wrapper (fixes zip corruption)
+      if: inputs.cleanup-wrapper == 'true'
+      shell: bash
+      run: |
+        echo "Cleaning up Gradle wrapper distributions..."
+        rm -rf ~/.gradle/wrapper/dists/* 2>/dev/null || true
+        echo "Wrapper cleanup complete"
+
+    - name: Cleanup corrupted Gradle caches
+      if: inputs.cleanup-caches == 'true'
+      shell: bash
+      run: |
+        echo "Cleaning up potentially corrupted Gradle caches..."
+        rm -rf ~/.gradle/caches/modules-2/files-2.1 2>/dev/null || true
+        rm -rf ~/.gradle/caches/jars-* 2>/dev/null || true
+        rm -rf ~/.gradle/caches/transforms-* 2>/dev/null || true
+        rm -rf ~/.gradle/caches/build-cache-* 2>/dev/null || true
+        # Clean up lock files that can cause issues
+        find ~/.gradle/caches -name "*.lock" -type f -delete 2>/dev/null || true
+        echo "Cache cleanup complete"
+
+    - name: Set up JDK ${{ inputs.java-version }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ inputs.java-distribution }}
+        java-version: ${{ inputs.java-version }}
+        cache: gradle
+
+    - name: Cache Gradle packages
+      if: inputs.gradle-cache-enabled == 'true'
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          .gradle
+          build
+          */build
+          ${{ inputs.additional-cache-paths }}
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4

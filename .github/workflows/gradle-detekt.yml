@@ -1,0 +1,50 @@
+name: Gradle Detekt
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      java-distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      detekt-task:
+        description: 'Detekt task name'
+        required: false
+        type: string
+        default: 'detekt'
+      no-daemon:
+        description: 'Run Gradle with --no-daemon flag'
+        required: false
+        type: boolean
+        default: true
+      gradle-args:
+        description: 'Additional Gradle arguments'
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        description: 'Runner to use (string or JSON array for labels)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+jobs:
+  detekt:
+    name: Detekt Analysis
+    runs-on: ${{ contains(inputs.runs-on, '[') && fromJson(inputs.runs-on) || inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: violabs/public-cicd/.github/actions/setup-java-gradle@main
+        with:
+          java-distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+
+      - name: Run Detekt
+        run: ./gradlew ${{ inputs.detekt-task }} ${{ inputs.no-daemon && '--no-daemon' || '' }} ${{ inputs.gradle-args }}

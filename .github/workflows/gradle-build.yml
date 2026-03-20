@@ -1,0 +1,65 @@
+name: Gradle Build Check
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      java-distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      build-tasks:
+        description: 'Gradle tasks to run for build check'
+        required: false
+        type: string
+        default: 'classes testClasses'
+      no-daemon:
+        description: 'Run Gradle with --no-daemon flag'
+        required: false
+        type: boolean
+        default: true
+      gradle-args:
+        description: 'Additional Gradle arguments'
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        description: 'Runner to use (string or JSON array for labels)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      cleanup-gradle-cache:
+        description: 'Clean up potentially corrupted Gradle caches before build'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      result:
+        description: 'Build result (success/failure)'
+        value: ${{ jobs.build-check.outputs.result }}
+
+jobs:
+  build-check:
+    name: Build Check
+    runs-on: ${{ contains(inputs.runs-on, '[') && fromJson(inputs.runs-on) || inputs.runs-on }}
+    outputs:
+      result: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java and Gradle
+        uses: violabs/public-cicd/.github/actions/setup-java-gradle@main
+        with:
+          java-version: ${{ inputs.java-version }}
+          java-distribution: ${{ inputs.java-distribution }}
+          cleanup-wrapper: ${{ inputs.cleanup-gradle-cache }}
+          cleanup-caches: ${{ inputs.cleanup-gradle-cache }}
+
+      - name: Compile project
+        id: build
+        run: ./gradlew ${{ inputs.build-tasks }} ${{ inputs.no-daemon && '--no-daemon' || '' }} ${{ inputs.gradle-args }}

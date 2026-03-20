@@ -1,0 +1,68 @@
+name: Detect Changed Gradle Modules
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      java-distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      no-daemon:
+        description: 'Run Gradle with --no-daemon flag'
+        required: false
+        type: boolean
+        default: true
+      runs-on:
+        description: 'Runner to use (string or JSON array for labels)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+    outputs:
+      matrix:
+        description: 'JSON array of modules to test'
+        value: ${{ jobs.detect-modules.outputs.matrix }}
+      has-modules:
+        description: 'Whether any modules were detected'
+        value: ${{ jobs.detect-modules.outputs.has-modules }}
+
+jobs:
+  detect-modules:
+    name: Detect Changed Modules
+    runs-on: ${{ contains(inputs.runs-on, '[') && fromJson(inputs.runs-on) || inputs.runs-on }}
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-modules: ${{ steps.set-matrix.outputs.has-modules }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: violabs/public-cicd/.github/actions/setup-java-gradle@main
+        with:
+          java-version: ${{ inputs.java-version }}
+          java-distribution: ${{ inputs.java-distribution }}
+
+      - name: Determine affected modules
+        id: set-matrix
+        env:
+          NO_DAEMON_FLAG: ${{ inputs.no-daemon && '--no-daemon' || '' }}
+        run: |
+          MATRIX=$(./gradlew -q detectChangedModules $NO_DAEMON_FLAG | grep 'MATRIX=' | cut -d'=' -f2-)
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+          if [ "$MATRIX" = "[]" ] || [ -z "$MATRIX" ]; then
+            echo "has-modules=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-modules=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Debug Output
+        run: |
+          echo "Detected modules: ${{ steps.set-matrix.outputs.matrix }}"
+          echo "Has modules: ${{ steps.set-matrix.outputs.has-modules }}"

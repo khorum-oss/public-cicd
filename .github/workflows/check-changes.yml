@@ -1,0 +1,109 @@
+name: Check Path Changes
+
+on:
+  workflow_call:
+    inputs:
+      include-patterns:
+        description: 'Regex pattern for paths to INCLUDE'
+        required: false
+        type: string
+        default: ''
+      exclude-patterns:
+        description: 'Regex pattern for paths to EXCLUDE'
+        required: false
+        type: string
+        default: ''
+      mode:
+        description: 'Detection mode: "include" or "exclude"'
+        required: false
+        type: string
+        default: 'include'
+      base-ref:
+        description: 'Base branch to compare against'
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        description: 'Runner to use'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+    outputs:
+      changed:
+        description: 'Whether relevant files have changed'
+        value: ${{ jobs.check-changes.outputs.changed }}
+      changed-files:
+        description: 'List of changed files'
+        value: ${{ jobs.check-changes.outputs.changed_files }}
+
+jobs:
+  check-changes:
+    name: Check Changes
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      changed_files: ${{ steps.check.outputs.changed_files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine comparison strategy
+        id: base-ref
+        run: |
+          set -e
+          if [ -n "${{ inputs.base-ref }}" ]; then
+            # Explicit base ref provided
+            echo "compare=origin/${{ inputs.base-ref }}...HEAD" >> "$GITHUB_OUTPUT"
+            echo "mode=branch" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.base_ref }}" ]; then
+            # Pull request - compare against base branch
+            echo "compare=origin/${{ github.base_ref }}...HEAD" >> "$GITHUB_OUTPUT"
+            echo "mode=branch" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            # Push event - compare against previous commit
+            echo "compare=HEAD~1..HEAD" >> "$GITHUB_OUTPUT"
+            echo "mode=commit" >> "$GITHUB_OUTPUT"
+          else
+            # Fallback to main branch
+            echo "compare=origin/main...HEAD" >> "$GITHUB_OUTPUT"
+            echo "mode=branch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for changes
+        id: check
+        run: |
+          set -e
+          CHANGED_FILES=$(git diff --name-only ${{ steps.base-ref.outputs.compare }} 2>/dev/null || echo "")
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changes detected"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "changed_files=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ inputs.mode }}" == "include" ]; then
+            if [ -n "${{ inputs.include-patterns }}" ]; then
+              MATCHED_FILES=$(echo "$CHANGED_FILES" | grep -E '${{ inputs.include-patterns }}' || true)
+            else
+              MATCHED_FILES="$CHANGED_FILES"
+            fi
+          else
+            if [ -n "${{ inputs.exclude-patterns }}" ]; then
+              MATCHED_FILES=$(echo "$CHANGED_FILES" | grep -vE '${{ inputs.exclude-patterns }}' || true)
+            else
+              MATCHED_FILES="$CHANGED_FILES"
+            fi
+          fi
+
+          if [ -n "$MATCHED_FILES" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed_files=$(echo "$MATCHED_FILES" | tr '\n' ',' | sed 's/,$//')" >> "$GITHUB_OUTPUT"
+            echo "Changed files:"
+            echo "$MATCHED_FILES"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "changed_files=" >> "$GITHUB_OUTPUT"
+            echo "No matching changes"
+          fi
