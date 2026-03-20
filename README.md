@@ -9,7 +9,7 @@ Reference these workflows from your repository:
 ```yaml
 jobs:
   build:
-    uses: violabs/public-cicd/.github/workflows/gradle-build.yml@main
+    uses: khorum-oss/public-cicd/.github/workflows/gradle-build.yml@main
     with:
       java-version: '21'
 ```
@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: violabs/public-cicd/.github/actions/setup-java-gradle@main
+      - uses: khorum-oss/public-cicd/.github/actions/setup-java-gradle@main
         with:
           java-version: '21'
 
